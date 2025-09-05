@@ -1,0 +1,83 @@
+#include <LiquidCrystal_I2C.h>
+#include <ESP8266WiFi.h>
+#include "DHT.h"
+
+#define DHTPIN 2          // DHT11 sensor connected to digital pin 2
+#define DHTTYPE DHT11
+#define VOLTAGE_PIN A0    // Voltage sensor on A0
+#define CURRENT_PIN A1    // Current sensor on A1
+
+// ThingSpeak Settings
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+const char* host = "api.thingspeak.com";
+String apiKey = "YOUR_API_KEY";   // From ThingSpeak channel
+
+WiFiClient client;
+DHT dht(DHTPIN, DHTTYPE);
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // LCD I2C address may be 0x3F in some cases
+
+float voltage = 0.0;
+float current = 0.0;
+float power   = 0.0;
+float temperature = 0.0;
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Solar Monitor");
+  delay(2000);
+
+  // Connect Wi-Fi
+  WiFi.begin(ssid, password);
+  lcd.clear();
+  lcd.print("Connecting WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  lcd.clear();
+  lcd.print("WiFi Connected");
+  delay(1000);
+}
+
+void loop() {
+  // 1. Read Sensors
+  voltage = analogRead(VOLTAGE_PIN) * (5.0 / 1023.0) * 11; // Voltage divider factor ~11
+  current = (analogRead(CURRENT_PIN) - 512) * (5.0 / 1023.0) * (30.0); // ACS712 (30A module)
+  if (current < 0) current = 0; // remove negative noise
+  temperature = dht.readTemperature();
+
+  // 2. Calculate Power
+  power = voltage * current;
+
+  // 3. Display on LCD
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("V:"); lcd.print(voltage);
+  lcd.print(" I:"); lcd.print(current);
+  lcd.setCursor(0, 1);
+  lcd.print("P:"); lcd.print(power);
+  lcd.print(" T:"); lcd.print(temperature);
+
+  // 4. Send Data to ThingSpeak
+  if (client.connect(host, 80)) {
+    String url = "/update?api_key=" + apiKey +
+                 "&field1=" + String(voltage) +
+                 "&field2=" + String(current) +
+                 "&field3=" + String(power) +
+                 "&field4=" + String(temperature);
+
+    client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+                 "Host: " + host + "\r\n" +
+                 "Connection: close\r\n\r\n");
+    Serial.println("Data sent to ThingSpeak");
+  }
+
+  delay(15000); // ThingSpeak allows 1 update every 15 sec
+}
+
